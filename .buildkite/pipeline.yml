@@ -1,0 +1,30 @@
+# File to be placed at `.buildkite/pipeline.yml` on branch `main` of
+# ali-dev-test-2/bk-forktest (the repository of pipeline `fork-pr`).
+# Legit main-branch build: writes a marker, saves a cache entry on the branch-scoped
+# registry `forkpr-cache`, reads it back, and prints the resolved scope + upload id.
+# `$$` is Buildkite's escape for a literal `$` at runtime (in-repo pipelines are
+# interpolated at upload time).
+steps:
+  - label: ":package: build + cache save (main)"
+    agents:
+      queue: cp-v4
+    command: |
+      set +e
+      REG=forkpr-cache
+      API="https://agent.buildkite.com/v3/cache_registries/$$REG"
+      AUTH="Authorization: Token $$BUILDKITE_AGENT_ACCESS_TOKEN"
+      J='Content-Type: application/json'
+      ADDR='{"target_paths":["/tmp/fp"],"cache_key":[{"value":"fp-key","mandatory":true}]}'
+      echo "BRANCH=[$$BUILDKITE_BRANCH] COMMIT=[$$BUILDKITE_COMMIT] PIPELINE=[$$BUILDKITE_PIPELINE_SLUG]"
+      echo "SOURCE=[$$BUILDKITE_SOURCE] PR=[$$BUILDKITE_PULL_REQUEST] REPO=[$$BUILDKITE_REPO]"
+      printf 'caches:\n  - name: fp\n    cache_key:\n      - fp-key\n    target_paths:\n      - /tmp/fp\n' > /tmp/fp-cache.yml
+      mkdir -p /tmp/fp
+      echo "MAIN-ENTRY-CONTENT" > /tmp/fp/marker.txt
+      echo "=== cache save ==="
+      buildkite-agent cache save --registry $$REG --force --cache-config-file /tmp/fp-cache.yml 2>&1 | tail -12
+      echo "=== raw retrieve (own) ==="
+      curl -sS -X POST -H "$$AUTH" -H "$$J" -d "$$ADDR" "$$API/retrieve"; echo
+      echo "=== agent restore read-back ==="
+      rm -rf /tmp/fp; mkdir -p /tmp/fp
+      buildkite-agent cache restore --registry $$REG 2>&1 | tail -10
+      echo "readback: $$(cat /tmp/fp/marker.txt 2>&1)"
