@@ -1,18 +1,16 @@
-# File to be placed at `.buildkite/pipeline.yml` on branch `main` of
-# ali-dev-test-2/bk-forktest (the repository of pipeline `fork-pr`).
-# Legit main-branch build on the branch-scoped registry `forkpr-cache`:
-#   LVCR_PHASE=save (default, e.g. a push-triggered build): write the marker, save the
-#     entry, read it back.
-#   LVCR_PHASE=check (set on a build created through the API): read back only, so the
-#     trusted branch's next restore can be observed without re-saving first.
-# `$$` is Buildkite's escape for a literal `$` at runtime (in-repo pipelines are
-# interpolated at upload time).
+# Trusted side: `.buildkite/pipeline.yml` on branch `main` of
+# ali-dev-test-2/bk-forktest (the base repository of pipeline `fork-pr`).
+#   LVCR_PHASE=save  (default, and the setting a push build runs): write the marker,
+#     save the scoped cache entry, then retrieve it back.
+#   LVCR_PHASE=check (set on a build created through the API): retrieve and restore
+#     only, so the trusted branch's next read can be observed without re-saving.
+# `$$` is Buildkite's escape for a literal `$` at runtime.
 steps:
-  - label: ":package: build + cache (main)"
+  - label: ":package: trusted main build + cache"
     agents:
       queue: cp-v4
     env:
-      BUILDKITE_AGENT_CACHE_STORE_URL: "file:///bkshare/forkpr-store"
+      BUILDKITE_AGENT_CACHE_STORE_URL: "file:///tmp/forkpr-store"
     command: |
       set +e
       REG=forkpr-cache
@@ -21,18 +19,19 @@ steps:
       J='Content-Type: application/json'
       ADDR='{"target_paths":["/tmp/fp"],"cache_key":[{"value":"fp-key","mandatory":true}]}'
       PHASE="$${LVCR_PHASE:-save}"
-      echo "BRANCH=[$$BUILDKITE_BRANCH] COMMIT=[$$BUILDKITE_COMMIT] PIPELINE=[$$BUILDKITE_PIPELINE_SLUG] PHASE=[$$PHASE]"
-      echo "SOURCE=[$$BUILDKITE_SOURCE] PR=[$$BUILDKITE_PULL_REQUEST] REPO=[$$BUILDKITE_REPO]"
+      echo "=== [trusted] branch main, phase $$PHASE ==="
+      echo "BRANCH=[$$BUILDKITE_BRANCH] COMMIT=[$$BUILDKITE_COMMIT] PIPELINE=[$$BUILDKITE_PIPELINE_SLUG] SOURCE=[$$BUILDKITE_SOURCE]"
       printf 'caches:\n  - name: fp\n    cache_key:\n      - fp-key\n    target_paths:\n      - /tmp/fp\n' > /tmp/fp-cache.yml
       if [ "$$PHASE" = "save" ]; then
         mkdir -p /tmp/fp
         echo "MAIN-ENTRY-CONTENT" > /tmp/fp/marker.txt
-        echo "=== cache save ==="
-        buildkite-agent cache save --registry $$REG --force --cache-config-file /tmp/fp-cache.yml 2>&1 | tail -6
+        echo "=== [trusted] cache save ==="
+        buildkite-agent cache save --registry $$REG --force --cache-config-file /tmp/fp-cache.yml 2>&1 | tail -4
       fi
-      echo "=== raw retrieve (own, server-resolved scopes) ==="
+      echo "=== [trusted] retrieve (server-resolved scopes) ==="
       curl -sS -X POST -H "$$AUTH" -H "$$J" -d "$$ADDR" "$$API/retrieve"; echo
-      echo "=== agent restore read-back ==="
+      echo "=== [trusted] cache restore ==="
       rm -rf /tmp/fp; mkdir -p /tmp/fp
-      buildkite-agent cache restore --registry $$REG --cache-config-file /tmp/fp-cache.yml 2>&1 | tail -8
+      buildkite-agent cache restore --registry $$REG --cache-config-file /tmp/fp-cache.yml 2>&1 | tail -4
       echo "readback: $$(cat /tmp/fp/marker.txt 2>&1)"
+      echo "=== [trusted] done ==="
